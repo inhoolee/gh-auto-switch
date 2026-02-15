@@ -1,0 +1,11 @@
+rules:
+  # Example: switch to "user-personal" when you're in ~/Documents (and subdirectories)
+  - prefix: ~/Documents
+    user: user-personal
+    host: github.com
+
+  # Example: switch to "user-work" when you're in ~/Workspace (and subdirectories)
+  - prefix: ~/Workspace
+    user: user-work
+    host: github.com
+
