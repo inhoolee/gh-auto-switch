@@ -1,51 +1,43 @@
 # gh-auto-switch
 
-Automatically switch GitHub CLI (`gh`) authentication user based on your current directory, so you don’t have to run `gh auth switch` manually.
+[![CI](https://github.com/inhoolee/gh-auto-switch/actions/workflows/ci.yml/badge.svg)](https://github.com/inhoolee/gh-auto-switch/actions/workflows/ci.yml)
 
-## Design Options
+Automatically switch the active GitHub CLI (`gh`) account based on your current directory.
 
-### Option 1: Shell Hook (zsh `chpwd` / bash prompt hook)
+This is useful if you have multiple GitHub accounts and want `gh` to “just work” as you move between personal and work checkouts.
 
-Pros:
+## How It Works
 
-- No extra dependencies.
-- Works everywhere you use a shell.
-- Fast when implemented as `decide` (no `gh` call) + conditional `switch`.
+`gh` has one active account per host (for example `github.com`). This tool:
 
-Cons:
+1. Matches the current directory against configured path-prefix rules.
+2. Checks the currently active account via `gh auth status`.
+3. Runs `gh auth switch --hostname <host> --user <user>` when a change is needed.
 
-- Needs a small snippet in your shell rc.
-- If you manually switch accounts, auto-correction depends on when the hook runs.
+No secrets are stored or printed. The tool only uses official `gh` commands.
 
-## Assumptions
+## Quickstart (macOS)
 
-- You are already logged into both accounts on `github.com` using `gh auth login`.
-- `gh auth switch --hostname ... --user ...` is available (fallback to `-h`/`-u` is implemented).
-- You have created a config file with your path rules (see **Config** below).
+1. Install:
 
-## Project Structure
-
-```
-cmd/gh-auto-switch/main.go
-internal/cli/        CLI subcommands
-internal/config/     config loading (yaml/json/toml)
-internal/gh/         gh command execution + output parsing
-internal/rules/      rule matching
+```sh
+go install github.com/inhoolee/gh-auto-switch/cmd/gh-auto-switch@latest
 ```
 
-## Install (macOS)
-
-### Simple install to `~/bin`
+Or from source:
 
 ```sh
 make install PREFIX="$HOME/bin"
 ```
 
-Ensure `~/bin` is on your `PATH`.
+2. Create a config file and edit it:
 
-## Shell Integration
+```sh
+gh-auto-switch config init
+$EDITOR ~/.config/gh-auto-switch/config.yaml
+```
 
-### zsh (`~/.zshrc`)
+3. Add the zsh hook (recommended) to `~/.zshrc`:
 
 ```sh
 autoload -U add-zsh-hook
@@ -82,9 +74,63 @@ add-zsh-hook precmd _gh_auto_switch_tick
 _gh_auto_switch_tick
 ```
 
-### bash (`~/.bashrc`)
+4. Verify:
 
-This runs on prompt render and only triggers when `$PWD` changed.
+```sh
+cd ~/Workspace/some-repo
+gh auth status
+```
+
+## Commands
+
+- `gh-auto-switch status`: show the rule match for the current directory and the active `gh` account
+- `gh-auto-switch switch`: switch now based on the current directory (idempotent)
+- `gh-auto-switch doctor`: verify `gh` is installed, config is readable, and required accounts exist
+- `gh-auto-switch decide`: print the desired `host|user` for the current directory (used by shell hooks)
+- `gh-auto-switch config path|show|init`: manage config
+
+## Config
+
+Config is required for `status/switch/doctor`. The shell hook uses `decide`, which no-ops when unconfigured.
+
+Locations (first match wins):
+
+- `$XDG_CONFIG_HOME/gh-auto-switch/config.yaml` (or `~/.config/gh-auto-switch/config.yaml` if `XDG_CONFIG_HOME` is not set; also `.yml` / `.json` / `.toml`)
+- `~/.gh-auto-switch.yaml` (also `.yml` / `.json` / `.toml`)
+
+Create a config file:
+
+```sh
+gh-auto-switch config init
+```
+
+Show which config is in use:
+
+```sh
+gh-auto-switch config path
+gh-auto-switch config show
+```
+
+Example `config.yaml`:
+
+```yaml
+rules:
+  - prefix: ~/Documents
+    user: user-personal
+    host: github.com
+  - prefix: ~/Workspace
+    user: user-work
+    host: github.com
+```
+
+Notes:
+
+- YAML/TOML support is intentionally minimal (a simple `rules` list as above).
+- `host` is optional in config; if omitted, it defaults to `github.com`.
+
+## Bash Integration
+
+Bash doesn’t have a `chpwd` hook, so this uses `PROMPT_COMMAND` and only runs when `$PWD` changes.
 
 ```sh
 __gh_auto_switch_prev_pwd=""
@@ -110,82 +156,27 @@ PROMPT_COMMAND="__gh_auto_switch${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
 __gh_auto_switch
 ```
 
-## Usage
+## GitHub Enterprise / Multiple Hosts
 
-```sh
-gh-auto-switch config init
-gh-auto-switch status
-gh-auto-switch switch
-gh-auto-switch doctor
-```
+Set `host` per rule (for example `ghe.company.com`). This tool does not inspect git remotes; it strictly follows your configured path rules.
 
-## Config
+## Troubleshooting
 
-Config is required to define your path prefixes and the GitHub usernames to switch to.
-If no config file is present, the shell hook will no-op (and `status/switch/doctor` will ask you to create one).
+- `config not found`: run `gh-auto-switch config init` and edit the generated file
+- `not logged in ...`: run `gh auth login --hostname <host>` for each account
+- Hook debugging:
+  - Run `gh-auto-switch -v switch` manually to see the `gh` commands executed
 
-Supported locations:
-
-- `$XDG_CONFIG_HOME/gh-auto-switch/config.yaml` (or `~/.config/gh-auto-switch/config.yaml` if `XDG_CONFIG_HOME` is not set; also `.yml` / `.json` / `.toml`)
-- `~/.gh-auto-switch.yaml` (also `.yml` / `.json` / `.toml`)
-
-### Create a config file
-
-```sh
-gh-auto-switch config init
-```
-
-You can also start from the repo template: `config.example.yaml`.
-
-Other formats:
-
-```sh
-gh-auto-switch config init --format json
-gh-auto-switch config init --format toml
-```
-
-Show which config is being used:
-
-```sh
-gh-auto-switch config path
-gh-auto-switch config show
-```
-
-Example `config.yaml`:
-
-```yaml
-rules:
-  - prefix: ~/Documents
-    user: user-personal
-    host: github.com
-  - prefix: ~/Workspace
-    user: user-work
-    host: github.com
-```
-
-You can also set `GH_AUTO_SWITCH_CONFIG=/path/to/config.yaml`.
-
-Notes:
-
-- YAML/TOML support is intentionally minimal (just enough for the simple `rules` schema shown above).
-
-## Notes / Edge Cases
-
-- Outside all rule prefixes: no-op.
-- Non-git directories: still switches (useful for `gh repo create`, etc.).
-- GitHub Enterprise repos: set `host` per rule (for example `ghe.company.com`). This tool does not inspect git remotes.
-- No secrets are printed; this tool only calls `gh auth status` and `gh auth switch`.
-
-## Testing
+## Development
 
 ```sh
 make test
+make build
 ```
 
-Unit tests cover:
+Tests include a stubbed-`gh` integration test, so they don’t require real GitHub credentials.
 
-- Path rule matching
-- `gh auth list/status` parsing
+## License
 
-Integration tests can be added by setting `GH_AUTO_SWITCH_GH` to a stub `gh` script in a temp directory (no real credentials required).
-This repo already includes an integration-style test that does exactly this.
+MIT (see `LICENSE`).
+
